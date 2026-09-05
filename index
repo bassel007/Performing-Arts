@@ -1,0 +1,996 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Building, Users, FolderOpen, FileText, Plus, ChevronRight, 
+  ArrowLeft, Trash2, Music, Video, X, UserCircle, Shield, Edit2, 
+  Lock, Eye, Menu, Settings, Key, ArrowUpDown
+} from 'lucide-react';
+
+// Base time for mock timestamps
+const BASE_TIME = Date.now();
+
+// --- INITIAL MOCK DATA ---
+const initialData = [
+  {
+    id: 1, name: "North Campus", lastModified: BASE_TIME - 50000, editedBy: null,
+    classes: [
+      {
+        id: 102, name: "Grade 2 Performing Arts", lastModified: BASE_TIME - 40000, editedBy: null,
+        materials: [{ id: 1, title: "Intro to Theater.pdf", type: "document", lastModified: BASE_TIME - 30000, editedBy: null }],
+        students: [{ id: 1, name: "Alice Johnson", lastModified: BASE_TIME - 20000, editedBy: null }, { id: 2, name: "Bob Smith", lastModified: BASE_TIME - 10000, editedBy: null }]
+      }
+    ]
+  },
+  { id: 2, name: "East Campus", classes: [], lastModified: BASE_TIME - 60000, editedBy: null }
+];
+
+// --- INITIAL MOCK USERS WITH PERMISSIONS ---
+const initialUsers = [
+  { id: 'u1', name: 'Dr. Alice', username: 'alice', password: '123', role: 'hod', branchId: null, permissions: { manageContent: true, manageUsers: true, editNames: true }, lastModified: BASE_TIME - 90000, editedBy: null },
+  { id: 'u2', name: 'Mr. Bob', username: 'bob', password: '123', role: 'branch_admin', branchId: 1, permissions: { manageContent: true, manageUsers: true, editNames: true }, lastModified: BASE_TIME - 80000, editedBy: null },
+  { id: 'u3', name: 'Ms. Charlie', username: 'charlie', password: '123', role: 'teacher', branchId: 1, permissions: { manageContent: false, manageUsers: false, editNames: false }, lastModified: BASE_TIME - 70000, editedBy: null },
+  { id: 'u4', name: 'Mrs. Davis', username: 'davis', password: '123', role: 'branch_admin', branchId: 2, permissions: { manageContent: true, manageUsers: true, editNames: false }, lastModified: BASE_TIME - 60000, editedBy: null },
+];
+
+export default function App() {
+  const [data, setData] = useState(initialData);
+  const [users, setUsers] = useState(initialUsers);
+  
+  // App Navigation State
+  const [activeUserId, setActiveUserId] = useState('u1');
+  const [viewMode, setViewMode] = useState('content'); // 'content' or 'users'
+  const [activeBranchId, setActiveBranchId] = useState(null);
+  const [activeClassId, setActiveClassId] = useState(null);
+  const [activeTab, setActiveTab] = useState('materials'); 
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  
+  // Advanced Sorting State (Field + Direction)
+  const [sortConfig, setSortConfig] = useState({
+    branches: { field: 'name', dir: 'asc' },
+    classes: { field: 'name', dir: 'asc' },
+    materials: { field: 'name', dir: 'asc' },
+    students: { field: 'name', dir: 'asc' },
+    users: { field: 'name', dir: 'asc' }
+  });
+  
+  // Form & Modal States
+  const [modalConfig, setModalConfig] = useState({ isOpen: false, type: null, editingId: null });
+  const [formData, setFormData] = useState({});
+  const [formError, setFormError] = useState('');
+
+  // --- CURRENT USER & PERMISSIONS ---
+  const currentUser = users.find(u => u.id === activeUserId) || users[0];
+  const isHOD = currentUser.role === 'hod';
+  
+  const canManageBranches = isHOD;
+  const canManageContent = isHOD || !!currentUser.permissions?.manageContent;
+  const canManageUsers = isHOD || !!currentUser.permissions?.manageUsers;
+  const canEditNames = isHOD || !!currentUser.permissions?.editNames; // New granular permission
+
+  const visibleBranches = isHOD ? data : data.filter(b => b.id === currentUser.branchId);
+  const activeBranch = data.find(b => b.id === activeBranchId);
+  const activeClass = activeBranch?.classes.find(c => c.id === activeClassId);
+
+  // Auto-manage navigation when user switches
+  useEffect(() => {
+    if (!isHOD) {
+      setActiveBranchId(currentUser.branchId);
+      const userBranch = data.find(b => b.id === currentUser.branchId);
+      if (!userBranch?.classes.some(c => c.id === activeClassId)) {
+        setActiveClassId(null);
+      }
+      if (!canManageUsers && viewMode === 'users') {
+        setViewMode('content');
+      }
+    } else {
+      if (viewMode === 'content' && activeBranchId && !data.some(b => b.id === activeBranchId)) {
+        setActiveBranchId(null);
+      }
+    }
+  }, [activeUserId, currentUser, isHOD, data, activeClassId, activeBranchId, canManageUsers, viewMode]);
+
+  // --- HANDLERS ---
+  
+  const navigateHome = () => {
+    setActiveBranchId(isHOD ? null : currentUser.branchId);
+    setActiveClassId(null);
+    setViewMode('content');
+    setIsMobileSidebarOpen(false);
+  };
+
+  const handleFormChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  const handleAddOrEditSubmit = (e) => {
+    e.preventDefault();
+    setFormError('');
+    const { type, editingId } = modalConfig;
+    const now = Date.now();
+    const currentName = currentUser.name;
+
+    if (type === 'branch' && canManageBranches) {
+      if (!editingId) {
+        if (formData.createAdmin && users.some(u => u.username === formData.adminUsername)) {
+          setFormError('The admin username is already taken. Please choose another.');
+          return;
+        }
+        if (formData.createTeacher && users.some(u => u.username === formData.teacherUsername)) {
+          setFormError('The teacher username is already taken. Please choose another.');
+          return;
+        }
+        if (formData.createAdmin && formData.createTeacher && formData.adminUsername === formData.teacherUsername) {
+          setFormError('Admin and Teacher cannot have the same username.');
+          return;
+        }
+      }
+      if (editingId) {
+        setData(data.map(b => b.id === editingId ? { ...b, name: formData.branchName.trim(), lastModified: now, editedBy: currentName } : b));
+      } else {
+        const newBranchId = now;
+        const newBranch = { id: newBranchId, name: formData.branchName.trim(), classes: [], lastModified: now, editedBy: currentName };
+        setData([...data, newBranch]);
+        
+        const newUsersList = [...users];
+        if (formData.createAdmin && formData.adminUsername) {
+          newUsersList.push({
+            id: 'u' + now + 'a', name: formData.adminName, username: formData.adminUsername, password: formData.adminPassword,
+            role: 'branch_admin', branchId: newBranchId, permissions: { manageContent: true, manageUsers: true, editNames: true }, 
+            lastModified: now, editedBy: currentName
+          });
+        }
+        if (formData.createTeacher && formData.teacherUsername) {
+          newUsersList.push({
+            id: 'u' + now + 't', name: formData.teacherName, username: formData.teacherUsername, password: formData.teacherPassword,
+            role: 'teacher', branchId: newBranchId, permissions: { manageContent: false, manageUsers: false, editNames: false }, 
+            lastModified: now, editedBy: currentName
+          });
+        }
+        setUsers(newUsersList);
+        
+        setActiveBranchId(newBranch.id);
+        setActiveClassId(null);
+        setViewMode('content');
+        setIsMobileSidebarOpen(false);
+      }
+    } 
+    else if (type === 'user' && canManageUsers) {
+      if (users.some(u => u.username === formData.username && u.id !== editingId)) {
+        setFormError('This username is already taken. Please choose another.');
+        return;
+      }
+      const userPayload = {
+        name: formData.name, username: formData.username, password: formData.password,
+        role: formData.role, branchId: isHOD ? parseInt(formData.branchId) : currentUser.branchId,
+        permissions: { manageContent: !!formData.manageContent, manageUsers: !!formData.manageUsers, editNames: !!formData.editNames },
+        lastModified: now,
+        editedBy: currentName
+      };
+
+      if (editingId) {
+        setUsers(users.map(u => u.id === editingId ? { ...u, ...userPayload } : u));
+      } else {
+        setUsers([...users, { id: 'u' + now, ...userPayload }]);
+      }
+    }
+    else if (type === 'class' && activeBranchId && canManageContent) {
+      if (editingId && canEditNames) {
+        setData(data.map(branch => branch.id === activeBranchId 
+          ? { ...branch, classes: branch.classes.map(c => c.id === editingId ? { ...c, name: formData.className.trim(), lastModified: now, editedBy: currentName } : c) } : branch
+        ));
+      } else if (!editingId) {
+        const newClass = { id: now, name: formData.className.trim(), materials: [], students: [], lastModified: now, editedBy: currentName };
+        setData(data.map(branch => branch.id === activeBranchId ? { ...branch, classes: [...branch.classes, newClass] } : branch));
+        setActiveClassId(newClass.id);
+      }
+    }
+    else if (type === 'students' && activeBranchId && activeClassId && canManageContent) {
+      // Bulk Adding Students
+      const names = (formData.studentNames || '').split('\n').map(n => n.trim()).filter(n => n !== '');
+      if (names.length > 0) {
+        const newStudents = names.map((name, idx) => ({ id: now + idx, name, lastModified: now, editedBy: currentName }));
+        setData(data.map(branch => branch.id === activeBranchId ? {
+          ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, students: [...cls.students, ...newStudents] } : cls)
+        } : branch));
+      }
+    }
+    else if (type === 'student' && activeBranchId && activeClassId && canManageContent && canEditNames && editingId) {
+      // Edit Single Student
+      setData(data.map(branch => branch.id === activeBranchId ? {
+        ...branch, classes: branch.classes.map(cls => cls.id === activeClassId 
+          ? { ...cls, students: cls.students.map(s => s.id === editingId ? { ...s, name: formData.studentName.trim(), lastModified: now, editedBy: currentName } : s) } : cls
+        )
+      } : branch));
+    }
+    else if (type === 'material' && activeBranchId && activeClassId && canManageContent) {
+      if (editingId && canEditNames) {
+        setData(data.map(branch => branch.id === activeBranchId ? {
+          ...branch, classes: branch.classes.map(cls => cls.id === activeClassId 
+            ? { ...cls, materials: cls.materials.map(m => m.id === editingId ? { ...m, title: formData.materialTitle.trim(), type: formData.materialType, lastModified: now, editedBy: currentName } : m) } : cls
+          )
+        } : branch));
+      } else if (!editingId) {
+        const newMaterial = { id: now, title: formData.materialTitle.trim(), type: formData.materialType || 'document', lastModified: now, editedBy: currentName };
+        setData(data.map(branch => branch.id === activeBranchId ? {
+          ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, materials: [...cls.materials, newMaterial] } : cls)
+        } : branch));
+      }
+    }
+
+    closeModal();
+  };
+
+  const handleDeleteItem = (type, id) => {
+    if (type === 'branch' && canManageBranches) {
+      setData(data.filter(b => b.id !== id));
+      if (activeBranchId === id) setActiveBranchId(null);
+    } 
+    else if (type === 'user' && canManageUsers) {
+      setUsers(users.filter(u => u.id !== id));
+      if (activeUserId === id) setActiveUserId(users[0].id);
+    }
+    else if (canManageContent) {
+      if (type === 'class') {
+        setData(data.map(branch => branch.id === activeBranchId ? { ...branch, classes: branch.classes.filter(c => c.id !== id) } : branch));
+        if (activeClassId === id) setActiveClassId(null);
+      }
+      else if (type === 'student') {
+        setData(data.map(branch => branch.id === activeBranchId ? {
+          ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, students: cls.students.filter(s => s.id !== id) } : cls)
+        } : branch));
+      }
+      else if (type === 'material') {
+        setData(data.map(branch => branch.id === activeBranchId ? {
+          ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, materials: cls.materials.filter(m => m.id !== id) } : cls)
+        } : branch));
+      }
+    }
+  };
+
+  const openModal = (type, editingItem = null) => {
+    setFormError('');
+    setModalConfig({ isOpen: true, type, editingId: editingItem ? editingItem.id : null });
+    
+    if (type === 'branch') {
+      setFormData(editingItem ? { branchName: editingItem.name } : { createAdmin: false, createTeacher: false });
+    } else if (type === 'class') {
+      setFormData({ className: editingItem ? editingItem.name : '' });
+    } else if (type === 'material') {
+      setFormData({ materialTitle: editingItem ? editingItem.title : '', materialType: editingItem ? editingItem.type : 'document' });
+    } else if (type === 'students') {
+      setFormData({ studentNames: '' });
+    } else if (type === 'student') {
+      setFormData({ studentName: editingItem ? editingItem.name : '' });
+    } else if (type === 'user') {
+      if (editingItem) {
+        setFormData({
+          name: editingItem.name, username: editingItem.username, password: editingItem.password,
+          role: editingItem.role, branchId: editingItem.branchId || '',
+          manageContent: editingItem.permissions?.manageContent || false,
+          manageUsers: editingItem.permissions?.manageUsers || false,
+          editNames: editingItem.permissions?.editNames || false
+        });
+      } else {
+        setFormData({ role: isHOD ? 'branch_admin' : 'teacher', branchId: isHOD ? (data[0]?.id || '') : currentUser.branchId, manageContent: false, manageUsers: false, editNames: false });
+      }
+    }
+  };
+
+  const closeModal = () => {
+    setFormError('');
+    setModalConfig({ isOpen: false, type: null, editingId: null });
+    setFormData({});
+  };
+
+  // --- SORTING LOGIC ---
+  const sortData = (array, configKey) => {
+    const { field, dir } = sortConfig[configKey];
+    return [...array].sort((a, b) => {
+      if (field === 'name') {
+        const nameA = (a.name || a.title || '').toLowerCase();
+        const nameB = (b.name || b.title || '').toLowerCase();
+        return dir === 'asc' ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+      } else if (field === 'date') {
+        const dateA = a.lastModified || a.id;
+        const dateB = b.lastModified || b.id;
+        return dir === 'asc' ? dateA - dateB : dateB - dateA;
+      }
+      return 0;
+    });
+  };
+
+  const sortedBranches = sortData(visibleBranches, 'branches');
+  
+  const visibleUsers = users.filter(u => {
+    if (isHOD) return true;
+    if (canManageUsers && u.branchId === currentUser.branchId) return true;
+    return false;
+  });
+  const sortedUsers = sortData(visibleUsers, 'users');
+  
+  const sortedClasses = sortData(activeBranch?.classes || [], 'classes');
+  const sortedMaterials = sortData(activeClass?.materials || [], 'materials');
+  const sortedStudents = sortData(activeClass?.students || [], 'students');
+
+  // --- REUSABLE SORT DROPDOWN COMPONENT ---
+  const SortDropdown = ({ sortKey }) => (
+    <div className="relative flex items-center bg-white border border-gray-200 rounded-xl shadow-sm hover:bg-gray-50 transition-all px-3 py-2.5">
+      <ArrowUpDown className="w-4 h-4 text-gray-500 mr-2 shrink-0" />
+      <select
+        className="bg-transparent text-sm font-semibold text-gray-700 outline-none cursor-pointer appearance-none pr-3"
+        value={`${sortConfig[sortKey].field}-${sortConfig[sortKey].dir}`}
+        onChange={(e) => {
+          const [field, dir] = e.target.value.split('-');
+          setSortConfig(prev => ({ ...prev, [sortKey]: { field, dir } }));
+        }}
+      >
+        <option value="name-asc">Name (A-Z)</option>
+        <option value="name-desc">Name (Z-A)</option>
+        <option value="date-desc">Newest Modified</option>
+        <option value="date-asc">Oldest Modified</option>
+      </select>
+    </div>
+  );
+
+  // --- MODAL RENDERER ---
+  const renderModal = () => {
+    if (!modalConfig.isOpen) return null;
+    const { type, editingId } = modalConfig;
+
+    return (
+      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg my-8 overflow-hidden border border-gray-100">
+          <div className="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/80 sticky top-0 z-10">
+            <h3 className="font-bold text-lg text-gray-800">
+              {editingId ? `Edit ${type.charAt(0).toUpperCase() + type.slice(1)}` : `Add New ${type === 'students' ? 'Students' : type.charAt(0).toUpperCase() + type.slice(1)}`}
+            </h3>
+            <button onClick={closeModal} type="button" className="p-1 hover:bg-gray-200 rounded-full text-gray-500 transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <form onSubmit={handleAddOrEditSubmit} className="p-5 space-y-5">
+            
+            {/* BRANCH MODAL */}
+            {type === 'branch' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Branch Name <span className="text-red-500">*</span></label>
+                  <input type="text" autoFocus name="branchName" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.branchName || ''} onChange={handleFormChange} required />
+                </div>
+                
+                {!editingId && (
+                  <div className="border border-indigo-100 bg-indigo-50/30 rounded-xl p-4 space-y-4 mt-6">
+                    <h4 className="text-sm font-bold text-indigo-900 border-b border-indigo-100 pb-2">Quick Account Creation (Optional)</h4>
+                    
+                    {/* Optional Admin */}
+                    <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+                      <label className="flex items-center gap-2 cursor-pointer mb-3">
+                        <input type="checkbox" name="createAdmin" checked={formData.createAdmin || false} onChange={handleFormChange} className="w-4 h-4 text-indigo-600 rounded border-gray-300" />
+                        <span className="text-sm font-bold text-gray-800">Create Branch Admin</span>
+                      </label>
+                      {formData.createAdmin && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6">
+                          <input type="text" name="adminName" placeholder="Full Name" className="border border-gray-300 rounded-md p-2 text-sm" value={formData.adminName || ''} onChange={handleFormChange} required />
+                          <div className="sm:col-span-2 grid grid-cols-2 gap-3">
+                            <input type="text" name="adminUsername" placeholder="Username" className="border border-gray-300 rounded-md p-2 text-sm" value={formData.adminUsername || ''} onChange={handleFormChange} required />
+                            <input type="text" name="adminPassword" placeholder="Password" className="border border-gray-300 rounded-md p-2 text-sm" value={formData.adminPassword || ''} onChange={handleFormChange} required />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Optional Teacher */}
+                    <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+                      <label className="flex items-center gap-2 cursor-pointer mb-3">
+                        <input type="checkbox" name="createTeacher" checked={formData.createTeacher || false} onChange={handleFormChange} className="w-4 h-4 text-indigo-600 rounded border-gray-300" />
+                        <span className="text-sm font-bold text-gray-800">Create Teacher Account</span>
+                      </label>
+                      {formData.createTeacher && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6">
+                          <input type="text" name="teacherName" placeholder="Full Name" className="border border-gray-300 rounded-md p-2 text-sm" value={formData.teacherName || ''} onChange={handleFormChange} required />
+                          <div className="sm:col-span-2 grid grid-cols-2 gap-3">
+                            <input type="text" name="teacherUsername" placeholder="Username" className="border border-gray-300 rounded-md p-2 text-sm" value={formData.teacherUsername || ''} onChange={handleFormChange} required />
+                            <input type="text" name="teacherPassword" placeholder="Password" className="border border-gray-300 rounded-md p-2 text-sm" value={formData.teacherPassword || ''} onChange={handleFormChange} required />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* USER MODAL */}
+            {type === 'user' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Full Name <span className="text-red-500">*</span></label>
+                    <input type="text" autoFocus name="name" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.name || ''} onChange={handleFormChange} required />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Username <span className="text-red-500">*</span></label>
+                    <input type="text" name="username" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.username || ''} onChange={handleFormChange} required />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Password <span className="text-red-500">*</span></label>
+                    <input type="text" name="password" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.password || ''} onChange={handleFormChange} required />
+                  </div>
+                  
+                  {isHOD && formData.role !== 'hod' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">Role</label>
+                        <select name="role" className="w-full border border-gray-300 rounded-lg p-2.5 bg-white" value={formData.role || 'teacher'} onChange={handleFormChange}>
+                          <option value="branch_admin">Branch Admin</option>
+                          <option value="teacher">Teacher</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">Assign to Branch</label>
+                        <select name="branchId" className="w-full border border-gray-300 rounded-lg p-2.5 bg-white" value={formData.branchId || ''} onChange={handleFormChange} required>
+                          {data.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                        </select>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {formData.role !== 'hod' && (
+                  <div className="mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                    <h4 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2"><Key className="w-4 h-4"/> Account Permissions</h4>
+                    <div className="space-y-4">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input type="checkbox" name="manageContent" checked={formData.manageContent || false} onChange={handleFormChange} className="mt-1 w-4 h-4 text-indigo-600 rounded border-gray-300" />
+                        <div>
+                          <span className="block text-sm font-semibold text-gray-800">Add/Remove Content</span>
+                          <span className="block text-xs text-gray-500">Allow user to add or delete sections, materials, and students.</span>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input type="checkbox" name="editNames" checked={formData.editNames || false} onChange={handleFormChange} className="mt-1 w-4 h-4 text-indigo-600 rounded border-gray-300" />
+                        <div>
+                          <span className="block text-sm font-semibold text-gray-800">Edit Names & Info</span>
+                          <span className="block text-xs text-gray-500">Allow user to edit the text info and names of existing items, accounts, and students.</span>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input type="checkbox" name="manageUsers" checked={formData.manageUsers || false} onChange={handleFormChange} className="mt-1 w-4 h-4 text-indigo-600 rounded border-gray-300" />
+                        <div>
+                          <span className="block text-sm font-semibold text-gray-800">Manage Users</span>
+                          <span className="block text-xs text-gray-500">Allow user to create, edit, or delete other accounts in their branch.</span>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* CLASS MODAL */}
+            {type === 'class' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Section/Class Name <span className="text-red-500">*</span></label>
+                <input type="text" autoFocus name="className" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.className || ''} onChange={handleFormChange} required />
+              </div>
+            )}
+
+            {/* MATERIAL MODAL */}
+            {type === 'material' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Material Title <span className="text-red-500">*</span></label>
+                  <input type="text" autoFocus name="materialTitle" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.materialTitle || ''} onChange={handleFormChange} required />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Type</label>
+                  <select name="materialType" className="w-full border border-gray-300 rounded-lg p-2.5 bg-white" value={formData.materialType || 'document'} onChange={handleFormChange}>
+                    <option value="document">Document (PDF, Word, etc.)</option>
+                    <option value="audio">Audio Track</option>
+                    <option value="video">Video Recording</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* STUDENTS MODAL (BULK ADD) */}
+            {type === 'students' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Paste Student Names (One per line) <span className="text-red-500">*</span></label>
+                <textarea autoFocus name="studentNames" rows={6} className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none resize-none" placeholder="John Doe&#10;Jane Smith" value={formData.studentNames || ''} onChange={handleFormChange} required />
+              </div>
+            )}
+
+            {/* STUDENT MODAL (SINGLE EDIT) */}
+            {type === 'student' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Student Name <span className="text-red-500">*</span></label>
+                <input type="text" autoFocus name="studentName" className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.studentName || ''} onChange={handleFormChange} required />
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="pt-4 flex justify-end gap-3 border-t border-gray-100 items-center">
+              {formError && <span className="text-red-500 text-sm font-semibold mr-auto pl-2">{formError}</span>}
+              <button type="button" onClick={closeModal} className="px-5 py-2.5 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold transition-colors">Cancel</button>
+              <button type="submit" className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold shadow-sm transition-colors">
+                {editingId ? 'Save Changes' : 'Create'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  // --- RENDERS ---
+  
+  const renderUserManagement = () => {
+    return (
+      <div className="flex-1 p-4 sm:p-6 md:p-10 overflow-y-auto w-full">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4 border-b border-gray-200 pb-6">
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">User Permissions</h2>
+              <p className="text-sm sm:text-base text-gray-500 mt-1">Manage accounts and access levels for your organization.</p>
+            </div>
+            <div className="flex gap-2 w-full sm:w-auto">
+              <SortDropdown sortKey="users" />
+              {canManageUsers && (
+                <button onClick={() => openModal('user')} className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium shadow-sm shadow-indigo-200 transition-all flex items-center justify-center gap-2 flex-1 sm:flex-none">
+                  <Plus className="w-5 h-5" /> Add Account
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[800px]">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Name & Credentials</th>
+                  <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Role & Branch</th>
+                  <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Permissions</th>
+                  <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {sortedUsers.map(user => (
+                  <tr key={user.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
+                          {user.name.charAt(0)}
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900">{user.name}</p>
+                          <p className="text-xs text-gray-500 font-mono">@{user.username} | Pwd: {user.password}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                        user.role === 'hod' ? 'bg-purple-100 text-purple-800' : 
+                        user.role === 'branch_admin' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+                      }`}>
+                        {user.role === 'hod' ? 'Head of Dept' : user.role === 'branch_admin' ? 'Branch Admin' : 'Teacher'}
+                      </span>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {user.role === 'hod' ? 'Global Access' : data.find(b => b.id === user.branchId)?.name || 'Unknown Branch'}
+                      </p>
+                      {user.editedBy && <p className="text-[10px] text-gray-400 italic mt-1">Edited by {user.editedBy}</p>}
+                    </td>
+                    <td className="p-4">
+                      <div className="flex gap-2 flex-wrap max-w-[200px]">
+                        {user.permissions?.manageContent ? 
+                          <span className="text-[10px] uppercase tracking-wider font-bold bg-gray-100 text-gray-600 px-2 py-1 rounded">Content ✓</span> : 
+                          <span className="text-[10px] uppercase tracking-wider font-bold bg-red-50 text-red-400 px-2 py-1 rounded">Content ✗</span>}
+                        {user.permissions?.editNames ? 
+                          <span className="text-[10px] uppercase tracking-wider font-bold bg-gray-100 text-gray-600 px-2 py-1 rounded">Edit Info ✓</span> : 
+                          <span className="text-[10px] uppercase tracking-wider font-bold bg-red-50 text-red-400 px-2 py-1 rounded">Edit Info ✗</span>}
+                        {user.permissions?.manageUsers ? 
+                          <span className="text-[10px] uppercase tracking-wider font-bold bg-gray-100 text-gray-600 px-2 py-1 rounded">Users ✓</span> : 
+                          <span className="text-[10px] uppercase tracking-wider font-bold bg-red-50 text-red-400 px-2 py-1 rounded">Users ✗</span>}
+                      </div>
+                    </td>
+                    <td className="p-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        {/* Allowed if HOD, or if user can edit names & manage users (but can't edit HOD unless they ARE the HOD) */}
+                        {(isHOD || (canManageUsers && canEditNames && user.role !== 'hod')) && (
+                          <button onClick={() => openModal('user', user)} className="p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors" title="Edit Profile">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        )}
+                        {/* Non-HOD users can be deleted by those with user management */}
+                        {user.role !== 'hod' && canManageUsers && (
+                          <button onClick={() => handleDeleteItem('user', user.id)} className="p-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors" title="Delete User">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {sortedUsers.length === 0 && (
+                  <tr><td colSpan="4" className="p-8 text-center text-gray-500">No users found.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderContentDashboard = () => {
+    // HOME PAGE FOR HOD (ALL BRANCHES GRID)
+    if (!activeBranchId) {
+      return (
+        <div className="flex-1 p-4 sm:p-6 md:p-10 overflow-y-auto">
+          <div className="max-w-5xl mx-auto">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4 border-b border-gray-200 pb-6">
+              <div>
+                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">All Campuses</h2>
+                <p className="text-sm sm:text-base text-gray-500 mt-1">Select a branch to view or manage its performing arts sections.</p>
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <SortDropdown sortKey="branches" />
+                {canManageBranches && (
+                  <button onClick={() => openModal('branch')} className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 flex-1 sm:flex-none">
+                    <Plus className="w-5 h-5" /> Add Campus
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {sortedBranches.length === 0 ? (
+              <div className="text-center p-10 sm:p-16 bg-white rounded-2xl border border-dashed border-gray-300 flex flex-col items-center">
+                <Building className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500 text-lg mb-4">No campuses created yet.</p>
+                {canManageBranches && (
+                  <button onClick={() => openModal('branch')} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-medium shadow-sm">
+                    Create First Campus
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {sortedBranches.map(branch => {
+                  const totalClasses = branch.classes.length;
+                  const totalStudents = branch.classes.reduce((acc, c) => acc + c.students.length, 0);
+
+                  return (
+                    <div key={branch.id} onClick={() => setActiveBranchId(branch.id)} className="bg-white rounded-2xl p-5 sm:p-6 border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer group flex flex-col relative overflow-hidden">
+                      {canManageBranches && (
+                        <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur rounded-lg p-1 shadow-sm border border-gray-100 z-10">
+                          <button onClick={(e) => { e.stopPropagation(); openModal('branch', branch); }} className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteItem('branch', branch.id); }} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      )}
+                      <div className="w-12 h-12 sm:w-14 sm:h-14 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <Building className="w-6 h-6 sm:w-7 sm:h-7" />
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1 pr-14 md:pr-0">{branch.name}</h3>
+                      <div className="mt-4 sm:mt-6 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-4 sm:gap-6 text-sm text-gray-500 font-medium">
+                        <div className="flex items-center gap-1.5"><FolderOpen className="w-4 h-4 text-gray-400" /><span>{totalClasses} Sections</span></div>
+                        <div className="flex items-center gap-1.5"><Users className="w-4 h-4 text-gray-400" /><span>{totalStudents} Students</span></div>
+                      </div>
+                      {branch.editedBy && <div className="mt-3 text-[10px] text-gray-400 italic">Edited by {branch.editedBy}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (activeBranchId && !activeClassId) {
+      return (
+        <div className="flex-1 p-4 sm:p-6 md:p-10 overflow-y-auto">
+          <div className="max-w-5xl mx-auto">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4 border-b border-gray-200 pb-6">
+              <div className="flex items-center gap-3">
+                {isHOD && (
+                  <button onClick={() => setActiveBranchId(null)} className="p-2 hover:bg-gray-100 rounded-xl text-gray-600 transition-colors border border-gray-200 hidden sm:block">
+                    <ArrowLeft className="w-5 h-5" />
+                  </button>
+                )}
+                <div>
+                  <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">{activeBranch?.name}</h2>
+                  <p className="text-sm sm:text-base text-gray-500 mt-1">Sections and Classes Overview</p>
+                </div>
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <SortDropdown sortKey="classes" />
+                {canManageContent && (
+                  <button onClick={() => openModal('class')} className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 flex-1 sm:flex-none">
+                    <Plus className="w-5 h-5" /> Add Section
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {sortedClasses.length === 0 ? (
+              <div className="text-center p-10 sm:p-16 bg-white rounded-2xl border border-dashed border-gray-300">
+                <FolderOpen className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500 text-lg">No sections created in this branch yet.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {sortedClasses.map(cls => (
+                  <div key={cls.id} onClick={() => setActiveClassId(cls.id)} className="bg-white rounded-2xl p-5 sm:p-6 border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer group flex flex-col relative overflow-hidden">
+                    <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur rounded-lg p-1 shadow-sm border border-gray-100 z-10">
+                      {(isHOD || (canManageContent && canEditNames)) && (
+                        <button onClick={(e) => { e.stopPropagation(); openModal('class', cls); }} className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"><Edit2 className="w-4 h-4" /></button>
+                      )}
+                      {canManageContent && (
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteItem('class', cls.id); }} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"><Trash2 className="w-4 h-4" /></button>
+                      )}
+                    </div>
+                    
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                      <Users className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 pr-14 md:pr-0">{cls.name}</h3>
+                    <div className="mt-4 sm:mt-6 pt-4 border-t border-gray-100 flex items-center justify-between sm:justify-start sm:gap-6 text-xs sm:text-sm text-gray-500 font-medium">
+                      <div className="flex items-center gap-1.5 sm:gap-2"><FileText className="w-4 h-4 text-gray-400" /><span>{cls.materials.length} Resources</span></div>
+                      <div className="flex items-center gap-1.5 sm:gap-2"><Users className="w-4 h-4 text-gray-400" /><span>{cls.students.length} Students</span></div>
+                    </div>
+                    {cls.editedBy && <div className="mt-3 pt-2 border-t border-gray-50 text-[10px] text-gray-400 italic">Edited by {cls.editedBy}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Inside a specific class
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
+        <div className="px-4 sm:px-6 py-4 border-b border-gray-200 bg-white sticky top-0 z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-start sm:items-center gap-3 sm:gap-4">
+            <button onClick={() => setActiveClassId(null)} className="p-2 -ml-2 sm:ml-0 hover:bg-gray-100 rounded-xl text-gray-600 transition-colors border border-transparent hover:border-gray-200 shrink-0">
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs text-indigo-600 font-bold tracking-wide uppercase mb-0.5 truncate">{activeBranch?.name}</div>
+              <h2 className="text-lg sm:text-2xl font-bold text-gray-900 truncate pr-2">{activeClass.name}</h2>
+            </div>
+          </div>
+          <div className="flex bg-gray-100/80 p-1.5 rounded-xl border border-gray-200/60 w-full lg:w-auto overflow-x-auto shrink-0">
+            <button onClick={() => setActiveTab('materials')} className={`flex-1 lg:flex-none px-4 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'materials' ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-900'}`}>Resources</button>
+            <button onClick={() => setActiveTab('students')} className={`flex-1 lg:flex-none px-4 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'students' ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-900'}`}>Students</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8">
+          <div className="max-w-4xl mx-auto">
+            {/* MATERIALS */}
+            {activeTab === 'materials' && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-bold text-gray-900">Learning Materials</h3>
+                  </div>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <SortDropdown sortKey="materials" />
+                    {canManageContent && (
+                      <button onClick={() => openModal('material')} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 sm:flex-none">
+                        <Plus className="w-4 h-4" /> Add Material
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {sortedMaterials.length === 0 ? (
+                  <div className="text-center p-10 sm:p-12 bg-white rounded-2xl border border-dashed border-gray-300">
+                    <p className="text-gray-500 text-sm sm:text-base">No course materials available for this section.</p>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                    <ul className="divide-y divide-gray-100">
+                      {sortedMaterials.map(material => (
+                        <li key={material.id} className="p-4 sm:p-5 hover:bg-indigo-50/30 flex items-center justify-between group transition-colors">
+                          <div className="flex items-center gap-3 sm:gap-4 min-w-0 pr-4">
+                            <div className="p-2 sm:p-3 bg-gray-50 border border-gray-100 rounded-xl">
+                              {material.type === 'audio' ? <Music className="w-5 h-5 text-purple-500" /> : material.type === 'video' ? <Video className="w-5 h-5 text-red-500" /> : <FileText className="w-5 h-5 text-blue-500" />}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-gray-900 text-sm sm:text-base truncate">{material.title}</p>
+                              <p className="text-[10px] sm:text-xs font-medium text-gray-500 uppercase tracking-wide mt-0.5">{material.type}</p>
+                              {material.editedBy && <p className="text-[10px] text-gray-400 italic mt-0.5">Edited by {material.editedBy}</p>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                            {(isHOD || (canManageContent && canEditNames)) && (
+                              <button onClick={() => openModal('material', material)} className="p-1.5 sm:p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
+                            )}
+                            {canManageContent && (
+                              <button onClick={() => handleDeleteItem('material', material.id)} className="p-1.5 sm:p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* STUDENTS */}
+            {activeTab === 'students' && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-bold text-gray-900">Enrolled Roster</h3>
+                  </div>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <SortDropdown sortKey="students" />
+                    {canManageContent && (
+                      <button onClick={() => openModal('students')} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 sm:flex-none">
+                        <Plus className="w-4 h-4" /> Add Students
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {sortedStudents.length === 0 ? (
+                  <div className="text-center p-10 sm:p-12 bg-white rounded-2xl border border-dashed border-gray-300">
+                    <p className="text-gray-500 text-sm sm:text-base">No students enrolled yet.</p>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                    <ul className="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
+                      {sortedStudents.map((student, index) => (
+                        <li key={student.id} className="p-4 sm:p-5 hover:bg-indigo-50/30 flex items-center justify-between group transition-colors">
+                          <div className="flex items-center gap-3 sm:gap-4 min-w-0 pr-4">
+                            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs sm:text-sm border border-indigo-200 shrink-0">{index + 1}</div>
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-semibold text-gray-800 text-sm sm:text-base truncate">{student.name}</span>
+                              {student.editedBy && <span className="block text-[10px] text-gray-400 italic mt-0.5">Edited by {student.editedBy}</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                            {(isHOD || (canManageContent && canEditNames)) && (
+                               <button onClick={() => openModal('student', student)} className="p-1.5 sm:p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
+                            )}
+                            {canManageContent && (
+                              <button onClick={() => handleDeleteItem('student', student.id)} className="p-1.5 sm:p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex flex-col h-screen font-sans text-gray-800 bg-gray-50 overflow-hidden">
+      
+      {/* HEADER */}
+      <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex flex-wrap gap-3 items-center justify-between shrink-0 z-20 shadow-sm">
+        
+        {/* CLICKABLE LOGO -> NAVIGATES HOME */}
+        <div 
+          className="flex items-center gap-3 cursor-pointer group" 
+          onClick={navigateHome}
+          title="Return to Main Page"
+        >
+          <button className="md:hidden p-1.5 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" onClick={(e) => { e.stopPropagation(); setIsMobileSidebarOpen(true); }}>
+            <Menu className="w-6 h-6" />
+          </button>
+          <div className="w-9 h-9 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg flex items-center justify-center shadow-inner shrink-0 group-hover:bg-indigo-700 transition-colors">
+            <Building className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 leading-tight group-hover:text-indigo-600 transition-colors">Alandalus</h1>
+            <p className="hidden sm:block text-xs text-gray-500 font-medium tracking-wide uppercase">Performing Arts</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-4 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white rounded-lg shadow-sm border border-gray-100">
+            {isHOD ? <Shield className="w-4 h-4 text-emerald-600" /> : <UserCircle className="w-4 h-4 text-indigo-600" />}
+            <span className="text-sm font-semibold text-gray-700">Account:</span>
+          </div>
+          <select 
+            className="bg-transparent text-sm font-medium text-gray-800 outline-none cursor-pointer p-1 pr-4 max-w-[140px] sm:max-w-none truncate"
+            value={activeUserId}
+            onChange={(e) => {
+              setActiveUserId(e.target.value);
+              setIsMobileSidebarOpen(false); 
+            }}
+          >
+            {users.map(u => (
+              <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+            ))}
+          </select>
+        </div>
+      </header>
+
+      {/* MAIN CONTAINER */}
+      <div className="flex-1 flex overflow-hidden relative w-full">
+        
+        {/* MOBILE SIDEBAR OVERLAY */}
+        {isMobileSidebarOpen && <div className="absolute inset-0 bg-slate-900/60 z-20 md:hidden backdrop-blur-sm transition-opacity" onClick={() => setIsMobileSidebarOpen(false)} />}
+
+        {/* SIDEBAR NAVIGATION */}
+        <div className={`absolute md:static inset-y-0 left-0 transform ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 w-[280px] md:w-72 bg-slate-900 text-white flex flex-col transition-transform duration-300 z-30 shadow-2xl md:shadow-none shrink-0`}>
+          <div className="flex items-center justify-between p-5 md:hidden border-b border-slate-800">
+            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Navigation</h2>
+            <button onClick={() => setIsMobileSidebarOpen(false)} className="p-1 hover:bg-slate-800 rounded-lg text-slate-400"><X className="w-5 h-5" /></button>
+          </div>
+
+          <div className="p-4 pb-2">
+             <div className="space-y-1">
+               <button 
+                 onClick={() => { setViewMode('content'); setIsMobileSidebarOpen(false); }}
+                 className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm font-bold transition-all ${viewMode === 'content' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+               >
+                 <Building className="w-5 h-5" /> Content Branches
+               </button>
+               {canManageUsers && (
+                 <button 
+                  onClick={() => { setViewMode('users'); setIsMobileSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm font-bold transition-all ${viewMode === 'users' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+                >
+                  <Settings className="w-5 h-5" /> User Permissions
+                </button>
+               )}
+             </div>
+          </div>
+
+          <hr className="border-slate-800 my-2 mx-4" />
+
+          {/* Contextual Sidebar Content based on View Mode */}
+          {viewMode === 'content' && (
+            <div className="p-4 flex-1 overflow-y-auto">
+              <div className="flex items-center justify-between mb-4 px-1">
+                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{isHOD ? 'All Branches' : 'My Branch'}</h2>
+              </div>
+              <div className="space-y-1.5">
+                {sortedBranches.length === 0 && <p className="text-sm text-slate-500 italic p-2 bg-slate-800/50 rounded-lg border border-slate-700 border-dashed">No branches available.</p>}
+                {sortedBranches.map(branch => (
+                  <div key={branch.id} className="group flex items-center">
+                    <button onClick={() => { setActiveBranchId(branch.id); setActiveClassId(null); setIsMobileSidebarOpen(false); }} className={`flex-1 flex items-center justify-between p-3 rounded-xl text-sm font-medium transition-all ${activeBranchId === branch.id ? 'bg-slate-800 text-white shadow-inner border border-slate-700' : 'text-slate-300 hover:bg-slate-800/50 hover:text-white'}`}>
+                      <span className="truncate">{branch.name}</span>
+                      <ChevronRight className={`w-4 h-4 transition-transform ${activeBranchId === branch.id ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {viewMode === 'users' && (
+            <div className="p-4 flex-1">
+              <p className="text-sm text-slate-400 leading-relaxed px-1">
+                You are currently managing user accounts and access control. Select "Content Branches" to return to course materials.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* MAIN CONTENT AREA */}
+        {viewMode === 'users' ? renderUserManagement() : renderContentDashboard()}
+
+      </div>
+      
+      {renderModal()}
+    </div>
+  );
+}
