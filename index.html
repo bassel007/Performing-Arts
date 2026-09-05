@@ -3,31 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Alandalus - Performing Arts</title>
+    <title>Alandalus - Performing Arts (Live)</title>
     
-    <!-- 1. Load Tailwind CSS (This fixes the styling issue you saw) -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- 2. Load FontAwesome for Icons (Replaces Lucide in standalone mode) -->
+    <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- 3. Load React -->
+    <!-- React -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
-    <!-- 4. Load Babel to compile JSX -->
+    <!-- Babel to compile JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
+    <!-- Notice data-type="module" to allow modern database imports -->
+    <script type="text/babel" data-type="module">
         const { useState, useEffect } = React;
 
-        // --- ICON COMPATIBILITY LAYER ---
-        // Maps the requested icons to standard FontAwesome icons for the standalone build
-        const Icon = ({ name, className }) => <i className={`fa-solid fa-${name} ${className || ''} flex items-center justify-center`}></i>;
+        // --- FIREBASE IMPORTS (CLOUD DATABASE) ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- DATABASE SETUP ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'performing-arts-dashboard';
+        let app, auth, db;
         
+        try {
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+            if (firebaseConfig) {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            }
+        } catch (e) {
+            console.error("Database initialization bypassed or failed. Running locally only.", e);
+        }
+
+        // --- ICON COMPATIBILITY LAYER ---
+        const Icon = ({ name, className }) => <i className={`fa-solid fa-${name} ${className || ''} flex items-center justify-center`}></i>;
         const Building = (props) => <Icon name="building" {...props} />;
         const Users = (props) => <Icon name="users" {...props} />;
         const FolderOpen = (props) => <Icon name="folder-open" {...props} />;
@@ -51,8 +69,8 @@
 
         const BASE_TIME = Date.now();
 
-        // --- INITIAL MOCK DATA ---
-        const initialData = [
+        // Default templates used ONLY on the very first fresh load
+        const initialDataTemplate = [
           {
             id: 1, name: "North Campus", lastModified: BASE_TIME - 50000, editedBy: null,
             classes: [
@@ -66,8 +84,7 @@
           { id: 2, name: "East Campus", classes: [], lastModified: BASE_TIME - 60000, editedBy: null }
         ];
 
-        // --- INITIAL MOCK USERS WITH PERMISSIONS ---
-        const initialUsers = [
+        const initialUsersTemplate = [
           { id: 'u1', name: 'Dr. Alice', username: 'alice', password: '123', role: 'hod', branchId: null, permissions: { manageContent: true, manageUsers: true, editNames: true }, lastModified: BASE_TIME - 90000, editedBy: null },
           { id: 'u2', name: 'Mr. Bob', username: 'bob', password: '123', role: 'branch_admin', branchId: 1, permissions: { manageContent: true, manageUsers: true, editNames: true }, lastModified: BASE_TIME - 80000, editedBy: null },
           { id: 'u3', name: 'Ms. Charlie', username: 'charlie', password: '123', role: 'teacher', branchId: 1, permissions: { manageContent: false, manageUsers: false, editNames: false }, lastModified: BASE_TIME - 70000, editedBy: null },
@@ -75,9 +92,14 @@
         ];
 
         function App() {
-          const [data, setData] = useState(initialData);
-          const [users, setUsers] = useState(initialUsers);
+          const [data, setData] = useState(initialDataTemplate);
+          const [users, setUsers] = useState(initialUsersTemplate);
           
+          // App & Loading States
+          const [authUser, setAuthUser] = useState(null);
+          const [isLoadingData, setIsLoadingData] = useState(true);
+
+          // Navigation States
           const [activeUserId, setActiveUserId] = useState('u1');
           const [viewMode, setViewMode] = useState('content');
           const [activeBranchId, setActiveBranchId] = useState(null);
@@ -109,6 +131,78 @@
           const activeBranch = data.find(b => b.id === activeBranchId);
           const activeClass = activeBranch?.classes.find(c => c.id === activeClassId);
 
+          // --- DATABASE SYNC LOGIC ---
+
+          // 1. Authenticate to database on start
+          useEffect(() => {
+            if (!auth) {
+              setIsLoadingData(false);
+              return;
+            }
+            const initAuth = async () => {
+              try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                  await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                  await signInAnonymously(auth);
+                }
+              } catch (err) {
+                console.error("Auth error:", err);
+                setIsLoadingData(false);
+              }
+            };
+            initAuth();
+            
+            const unsubscribe = onAuthStateChanged(auth, (u) => {
+              setAuthUser(u);
+              if (!u) setIsLoadingData(false);
+            });
+            return () => unsubscribe();
+          }, []);
+
+          // 2. Fetch/Listen for live data changes
+          useEffect(() => {
+            if (!authUser || !db) return;
+            
+            const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'dashboard', 'liveState');
+            const unsubscribe = onSnapshot(stateRef, (docSnap) => {
+              if (docSnap.exists()) {
+                const dbData = docSnap.data();
+                if (dbData.branches) setData(dbData.branches);
+                if (dbData.users) setUsers(dbData.users);
+              } else {
+                // First time ever running: Seed the database
+                setDoc(stateRef, { branches: initialDataTemplate, users: initialUsersTemplate });
+              }
+              setIsLoadingData(false);
+            }, (error) => {
+              console.error("Data sync error:", error);
+              setIsLoadingData(false);
+            });
+            
+            return () => unsubscribe();
+          }, [authUser]);
+
+          // 3. Helper to instantly push changes to the cloud
+          const syncToCloud = async (newBranches, newUsers) => {
+            // Optimistic instant UI update
+            if (newBranches) setData(newBranches);
+            if (newUsers) setUsers(newUsers);
+
+            if (!db || !authUser) return; // Skip if database is unavailable
+            
+            try {
+              const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'dashboard', 'liveState');
+              await setDoc(stateRef, {
+                branches: newBranches || data,
+                users: newUsers || users
+              }, { merge: true });
+            } catch (err) {
+              console.error("Failed to save changes to cloud:", err);
+            }
+          };
+
+          // --- AUTO-NAVIGATION ---
           useEffect(() => {
             if (!isHOD) {
               setActiveBranchId(currentUser.branchId);
@@ -126,6 +220,8 @@
             }
           }, [activeUserId, currentUser, isHOD, data, activeClassId, activeBranchId, canManageUsers, viewMode]);
 
+          // --- UI HANDLERS ---
+          
           const navigateHome = () => {
             setActiveBranchId(isHOD ? null : currentUser.branchId);
             setActiveClassId(null);
@@ -151,24 +247,22 @@
             if (type === 'branch' && canManageBranches) {
               if (!editingId) {
                 if (formData.createAdmin && users.some(u => u.username === formData.adminUsername)) {
-                  setFormError('The admin username is already taken. Please choose another.');
-                  return;
+                  setFormError('The admin username is already taken. Please choose another.'); return;
                 }
                 if (formData.createTeacher && users.some(u => u.username === formData.teacherUsername)) {
-                  setFormError('The teacher username is already taken. Please choose another.');
-                  return;
+                  setFormError('The teacher username is already taken. Please choose another.'); return;
                 }
                 if (formData.createAdmin && formData.createTeacher && formData.adminUsername === formData.teacherUsername) {
-                  setFormError('Admin and Teacher cannot have the same username.');
-                  return;
+                  setFormError('Admin and Teacher cannot have the same username.'); return;
                 }
               }
+              
               if (editingId) {
-                setData(data.map(b => b.id === editingId ? { ...b, name: formData.branchName.trim(), lastModified: now, editedBy: currentName } : b));
+                syncToCloud(data.map(b => b.id === editingId ? { ...b, name: formData.branchName.trim(), lastModified: now, editedBy: currentName } : b), null);
               } else {
                 const newBranchId = now;
                 const newBranch = { id: newBranchId, name: formData.branchName.trim(), classes: [], lastModified: now, editedBy: currentName };
-                setData([...data, newBranch]);
+                const newBranchesList = [...data, newBranch];
                 
                 const newUsersList = [...users];
                 if (formData.createAdmin && formData.adminUsername) {
@@ -185,7 +279,8 @@
                     lastModified: now, editedBy: currentName
                   });
                 }
-                setUsers(newUsersList);
+                
+                syncToCloud(newBranchesList, newUsersList);
                 
                 setActiveBranchId(newBranch.id);
                 setActiveClassId(null);
@@ -202,24 +297,23 @@
                 name: formData.name, username: formData.username, password: formData.password,
                 role: formData.role, branchId: isHOD ? parseInt(formData.branchId) : currentUser.branchId,
                 permissions: { manageContent: !!formData.manageContent, manageUsers: !!formData.manageUsers, editNames: !!formData.editNames },
-                lastModified: now,
-                editedBy: currentName
+                lastModified: now, editedBy: currentName
               };
 
               if (editingId) {
-                setUsers(users.map(u => u.id === editingId ? { ...u, ...userPayload } : u));
+                syncToCloud(null, users.map(u => u.id === editingId ? { ...u, ...userPayload } : u));
               } else {
-                setUsers([...users, { id: 'u' + now, ...userPayload }]);
+                syncToCloud(null, [...users, { id: 'u' + now, ...userPayload }]);
               }
             }
             else if (type === 'class' && activeBranchId && canManageContent) {
               if (editingId && canEditNames) {
-                setData(data.map(branch => branch.id === activeBranchId 
+                syncToCloud(data.map(branch => branch.id === activeBranchId 
                   ? { ...branch, classes: branch.classes.map(c => c.id === editingId ? { ...c, name: formData.className.trim(), lastModified: now, editedBy: currentName } : c) } : branch
-                ));
+                ), null);
               } else if (!editingId) {
                 const newClass = { id: now, name: formData.className.trim(), materials: [], students: [], lastModified: now, editedBy: currentName };
-                setData(data.map(branch => branch.id === activeBranchId ? { ...branch, classes: [...branch.classes, newClass] } : branch));
+                syncToCloud(data.map(branch => branch.id === activeBranchId ? { ...branch, classes: [...branch.classes, newClass] } : branch), null);
                 setActiveClassId(newClass.id);
               }
             }
@@ -227,30 +321,30 @@
               const names = (formData.studentNames || '').split('\n').map(n => n.trim()).filter(n => n !== '');
               if (names.length > 0) {
                 const newStudents = names.map((name, idx) => ({ id: now + idx, name, lastModified: now, editedBy: currentName }));
-                setData(data.map(branch => branch.id === activeBranchId ? {
+                syncToCloud(data.map(branch => branch.id === activeBranchId ? {
                   ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, students: [...cls.students, ...newStudents] } : cls)
-                } : branch));
+                } : branch), null);
               }
             }
             else if (type === 'student' && activeBranchId && activeClassId && canManageContent && canEditNames && editingId) {
-              setData(data.map(branch => branch.id === activeBranchId ? {
+              syncToCloud(data.map(branch => branch.id === activeBranchId ? {
                 ...branch, classes: branch.classes.map(cls => cls.id === activeClassId 
                   ? { ...cls, students: cls.students.map(s => s.id === editingId ? { ...s, name: formData.studentName.trim(), lastModified: now, editedBy: currentName } : s) } : cls
                 )
-              } : branch));
+              } : branch), null);
             }
             else if (type === 'material' && activeBranchId && activeClassId && canManageContent) {
               if (editingId && canEditNames) {
-                setData(data.map(branch => branch.id === activeBranchId ? {
+                syncToCloud(data.map(branch => branch.id === activeBranchId ? {
                   ...branch, classes: branch.classes.map(cls => cls.id === activeClassId 
                     ? { ...cls, materials: cls.materials.map(m => m.id === editingId ? { ...m, title: formData.materialTitle.trim(), type: formData.materialType, lastModified: now, editedBy: currentName } : m) } : cls
                   )
-                } : branch));
+                } : branch), null);
               } else if (!editingId) {
                 const newMaterial = { id: now, title: formData.materialTitle.trim(), type: formData.materialType || 'document', lastModified: now, editedBy: currentName };
-                setData(data.map(branch => branch.id === activeBranchId ? {
+                syncToCloud(data.map(branch => branch.id === activeBranchId ? {
                   ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, materials: [...cls.materials, newMaterial] } : cls)
-                } : branch));
+                } : branch), null);
               }
             }
 
@@ -259,27 +353,27 @@
 
           const handleDeleteItem = (type, id) => {
             if (type === 'branch' && canManageBranches) {
-              setData(data.filter(b => b.id !== id));
+              syncToCloud(data.filter(b => b.id !== id), null);
               if (activeBranchId === id) setActiveBranchId(null);
             } 
             else if (type === 'user' && canManageUsers) {
-              setUsers(users.filter(u => u.id !== id));
+              syncToCloud(null, users.filter(u => u.id !== id));
               if (activeUserId === id) setActiveUserId(users[0].id);
             }
             else if (canManageContent) {
               if (type === 'class') {
-                setData(data.map(branch => branch.id === activeBranchId ? { ...branch, classes: branch.classes.filter(c => c.id !== id) } : branch));
+                syncToCloud(data.map(branch => branch.id === activeBranchId ? { ...branch, classes: branch.classes.filter(c => c.id !== id) } : branch), null);
                 if (activeClassId === id) setActiveClassId(null);
               }
               else if (type === 'student') {
-                setData(data.map(branch => branch.id === activeBranchId ? {
+                syncToCloud(data.map(branch => branch.id === activeBranchId ? {
                   ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, students: cls.students.filter(s => s.id !== id) } : cls)
-                } : branch));
+                } : branch), null);
               }
               else if (type === 'material') {
-                setData(data.map(branch => branch.id === activeBranchId ? {
+                syncToCloud(data.map(branch => branch.id === activeBranchId ? {
                   ...branch, classes: branch.classes.map(cls => cls.id === activeClassId ? { ...cls, materials: cls.materials.filter(m => m.id !== id) } : cls)
-                } : branch));
+                } : branch), null);
               }
             }
           };
@@ -547,6 +641,19 @@
               </div>
             );
           };
+
+          // --- RENDERS ---
+          
+          if (isLoadingData) {
+            return (
+              <div className="flex h-screen w-full items-center justify-center bg-gray-50">
+                <div className="flex flex-col items-center">
+                  <i className="fa-solid fa-circle-notch fa-spin text-4xl text-indigo-600 mb-4"></i>
+                  <p className="text-gray-500 font-medium">Connecting to live database...</p>
+                </div>
+              </div>
+            );
+          }
 
           const renderUserManagement = () => {
             return (
