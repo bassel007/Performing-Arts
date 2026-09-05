@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Alandalus - Performing Arts (Live)</title>
+    <title>Alandalus - Performing Arts</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -20,29 +20,28 @@
 <body>
     <div id="root"></div>
 
-    <!-- Notice data-type="module" to allow modern database imports -->
     <script type="text/babel" data-type="module">
         const { useState, useEffect } = React;
 
-        // --- FIREBASE IMPORTS (CLOUD DATABASE) ---
+        // --- FIREBASE IMPORTS ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- DATABASE SETUP ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'performing-arts-dashboard';
-        let app, auth, db;
-        
-        try {
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-            if (firebaseConfig) {
-                app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-            }
-        } catch (e) {
-            console.error("Database initialization bypassed or failed. Running locally only.", e);
-        }
+        // --- YOUR LIVE FIREBASE CONFIGURATION ---
+        const firebaseConfig = {
+          apiKey: "AIzaSyBYausbEcEMaiFVID5QjUqkXpzmDVnWMNw",
+          authDomain: "performing-arts-c3905.firebaseapp.com",
+          projectId: "performing-arts-c3905",
+          storageBucket: "performing-arts-c3905.firebasestorage.app",
+          messagingSenderId: "973038053470",
+          appId: "1:973038053470:web:7e5caec9aeb6ca06ddaccf",
+          measurementId: "G-VBBFJ4XYTJ"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const appId = 'alandalus-performing-arts-main';
 
         // --- ICON COMPATIBILITY LAYER ---
         const Icon = ({ name, className }) => <i className={`fa-solid fa-${name} ${className || ''} flex items-center justify-center`}></i>;
@@ -69,7 +68,7 @@
 
         const BASE_TIME = Date.now();
 
-        // Default templates used ONLY on the very first fresh load
+        // Default templates
         const initialDataTemplate = [
           {
             id: 1, name: "North Campus", lastModified: BASE_TIME - 50000, editedBy: null,
@@ -95,8 +94,6 @@
           const [data, setData] = useState(initialDataTemplate);
           const [users, setUsers] = useState(initialUsersTemplate);
           
-          // App & Loading States
-          const [authUser, setAuthUser] = useState(null);
           const [isLoadingData, setIsLoadingData] = useState(true);
 
           // Navigation States
@@ -131,66 +128,30 @@
           const activeBranch = data.find(b => b.id === activeBranchId);
           const activeClass = activeBranch?.classes.find(c => c.id === activeClassId);
 
-          // --- DATABASE SYNC LOGIC ---
-
-          // 1. Authenticate to database on start
+          // --- FIREBASE SYNC HOOKS (WITHOUT AUTH RESTRICTION) ---
           useEffect(() => {
-            if (!auth) {
-              setIsLoadingData(false);
-              return;
-            }
-            const initAuth = async () => {
-              try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                  await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                  await signInAnonymously(auth);
-                }
-              } catch (err) {
-                console.error("Auth error:", err);
-                setIsLoadingData(false);
-              }
-            };
-            initAuth();
-            
-            const unsubscribe = onAuthStateChanged(auth, (u) => {
-              setAuthUser(u);
-              if (!u) setIsLoadingData(false);
-            });
-            return () => unsubscribe();
-          }, []);
-
-          // 2. Fetch/Listen for live data changes
-          useEffect(() => {
-            if (!authUser || !db) return;
-            
             const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'dashboard', 'liveState');
-            const unsubscribe = onSnapshot(stateRef, (docSnap) => {
+            const unsubscribeData = onSnapshot(stateRef, (docSnap) => {
               if (docSnap.exists()) {
                 const dbData = docSnap.data();
                 if (dbData.branches) setData(dbData.branches);
                 if (dbData.users) setUsers(dbData.users);
               } else {
-                // First time ever running: Seed the database
                 setDoc(stateRef, { branches: initialDataTemplate, users: initialUsersTemplate });
               }
               setIsLoadingData(false);
             }, (error) => {
-              console.error("Data sync error:", error);
+              console.error("Firestore sync error:", error);
               setIsLoadingData(false);
             });
             
-            return () => unsubscribe();
-          }, [authUser]);
+            return () => unsubscribeData();
+          }, []);
 
-          // 3. Helper to instantly push changes to the cloud
           const syncToCloud = async (newBranches, newUsers) => {
-            // Optimistic instant UI update
             if (newBranches) setData(newBranches);
             if (newUsers) setUsers(newUsers);
 
-            if (!db || !authUser) return; // Skip if database is unavailable
-            
             try {
               const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'dashboard', 'liveState');
               await setDoc(stateRef, {
@@ -198,7 +159,7 @@
                 users: newUsers || users
               }, { merge: true });
             } catch (err) {
-              console.error("Failed to save changes to cloud:", err);
+              console.error("Failed to sync changes to database:", err);
             }
           };
 
@@ -1016,15 +977,9 @@
                   <button className="md:hidden p-1.5 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" onClick={(e) => { e.stopPropagation(); setIsMobileSidebarOpen(true); }}>
                     <Menu className="w-6 h-6" />
                   </button>
-                  <img 
-                    src="https://drive.google.com/uc?export=view&id=1XVavxFZhMwT3f7q3vU1TQsAsXBByC_rX" 
-                    alt="Alandalus Logo" 
-                    className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0 transition-transform group-hover:scale-105"
-                    onError={(e) => { 
-                      e.target.onerror = null; 
-                      e.target.parentElement.innerHTML = '<div class="w-9 h-9 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg flex items-center justify-center shadow-inner shrink-0 group-hover:bg-indigo-700 transition-colors"><i class="fa-solid fa-building text-white"></i></div>';
-                    }}
-                  />
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-600 rounded-xl flex items-center justify-center shadow-md shrink-0 text-white font-bold text-xl">
+                    A
+                  </div>
                   <div>
                     <h1 className="text-lg sm:text-xl font-bold text-gray-900 leading-tight group-hover:text-indigo-600 transition-colors">Alandalus</h1>
                     <p className="hidden sm:block text-xs text-gray-500 font-medium tracking-wide uppercase">Performing Arts</p>
