@@ -1016,9 +1016,15 @@
                   <button className="md:hidden p-1.5 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" onClick={(e) => { e.stopPropagation(); setIsMobileSidebarOpen(true); }}>
                     <Menu className="w-6 h-6" />
                   </button>
-                  <div className="w-9 h-9 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg flex items-center justify-center shadow-inner shrink-0 group-hover:bg-indigo-700 transition-colors">
-                    <Building className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-                  </div>
+                  <img 
+                    src="https://drive.google.com/uc?export=view&id=1XVavxFZhMwT3f7q3vU1TQsAsXBByC_rX" 
+                    alt="Alandalus Logo" 
+                    className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0 transition-transform group-hover:scale-105"
+                    onError={(e) => { 
+                      e.target.onerror = null; 
+                      e.target.parentElement.innerHTML = '<div class="w-9 h-9 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg flex items-center justify-center shadow-inner shrink-0 group-hover:bg-indigo-700 transition-colors"><i class="fa-solid fa-building text-white"></i></div>';
+                    }}
+                  />
                   <div>
                     <h1 className="text-lg sm:text-xl font-bold text-gray-900 leading-tight group-hover:text-indigo-600 transition-colors">Alandalus</h1>
                     <p className="hidden sm:block text-xs text-gray-500 font-medium tracking-wide uppercase">Performing Arts</p>
