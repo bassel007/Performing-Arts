@@ -5,16 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Alandalus - Performing Arts</title>
     
-    <!-- Tailwind CSS -->
+  
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome for Icons -->
+   
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- React -->
+  
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
-    <!-- Babel to compile JSX -->
+
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
@@ -23,11 +23,14 @@
     <script type="text/babel" data-type="module">
         const { useState, useEffect } = React;
 
-        // --- FIREBASE IMPORTS ---
+      
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- YOUR LIVE FIREBASE CONFIGURATION ---
+        
+
+
+        
         const firebaseConfig = {
           apiKey: "AIzaSyBYausbEcEMaiFVID5QjUqkXpzmDVnWMNw",
           authDomain: "performing-arts-c3905.firebaseapp.com",
@@ -38,12 +41,12 @@
           measurementId: "G-VBBFJ4XYTJ"
         };
 
-        // Initialize Firebase
+       
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const appId = 'alandalus-performing-arts-main';
 
-        // --- ICON COMPATIBILITY LAYER ---
+       
         const Icon = ({ name, className }) => <i className={`fa-solid fa-${name} ${className || ''} flex items-center justify-center`}></i>;
         const Building = (props) => <Icon name="building" {...props} />;
         const Users = (props) => <Icon name="users" {...props} />;
@@ -68,7 +71,7 @@
 
         const BASE_TIME = Date.now();
 
-        // Default templates
+        
         const initialDataTemplate = [
           {
             id: 1, name: "North Campus", lastModified: BASE_TIME - 50000, editedBy: null,
@@ -96,7 +99,7 @@
           
           const [isLoadingData, setIsLoadingData] = useState(true);
 
-          // Navigation States
+          
           const [activeUserId, setActiveUserId] = useState('u1');
           const [viewMode, setViewMode] = useState('content');
           const [activeBranchId, setActiveBranchId] = useState(null);
@@ -128,7 +131,7 @@
           const activeBranch = data.find(b => b.id === activeBranchId);
           const activeClass = activeBranch?.classes.find(c => c.id === activeClassId);
 
-          // --- FIREBASE SYNC HOOKS (WITHOUT AUTH RESTRICTION) ---
+         
           useEffect(() => {
             const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'dashboard', 'liveState');
             const unsubscribeData = onSnapshot(stateRef, (docSnap) => {
@@ -163,7 +166,7 @@
             }
           };
 
-          // --- AUTO-NAVIGATION ---
+         
           useEffect(() => {
             if (!isHOD) {
               setActiveBranchId(currentUser.branchId);
@@ -181,7 +184,7 @@
             }
           }, [activeUserId, currentUser, isHOD, data, activeClassId, activeBranchId, canManageUsers, viewMode]);
 
-          // --- UI HANDLERS ---
+          
           
           const navigateHome = () => {
             setActiveBranchId(isHOD ? null : currentUser.branchId);
@@ -603,7 +606,7 @@
             );
           };
 
-          // --- RENDERS ---
+        
           
           if (isLoadingData) {
             return (
@@ -977,9 +980,18 @@
                   <button className="md:hidden p-1.5 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" onClick={(e) => { e.stopPropagation(); setIsMobileSidebarOpen(true); }}>
                     <Menu className="w-6 h-6" />
                   </button>
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-600 rounded-xl flex items-center justify-center shadow-md shrink-0 text-white font-bold text-xl">
-                    A
-                  </div>
+                  
+                  {/* LOGO IMAGE */}
+                  <img 
+                    src="./logo.png" 
+                    alt="Alandalus Logo" 
+                    className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0 transition-transform group-hover:scale-105"
+                    onError={(e) => { 
+                      e.target.onerror = null; 
+                      e.target.outerHTML = '<div class="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-600 rounded-xl flex items-center justify-center shadow-md shrink-0 text-white font-bold text-xl">A</div>';
+                    }}
+                  />
+
                   <div>
                     <h1 className="text-lg sm:text-xl font-bold text-gray-900 leading-tight group-hover:text-indigo-600 transition-colors">Alandalus</h1>
                     <p className="hidden sm:block text-xs text-gray-500 font-medium tracking-wide uppercase">Performing Arts</p>
